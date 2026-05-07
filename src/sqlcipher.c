@@ -735,7 +735,6 @@ static void sqlcipher_mlock(void *ptr, sqlite_uint64 sz) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_mlock: calling mlock(%p,%lu); _SC_PAGESIZE=%lu", ptr - offset, sz + offset, pagesize);
   rc = mlock(ptr - offset, sz + offset);
   if(rc!=0) {
-    sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_MEMORY, "sqlcipher_mlock: mlock() returned %d errno=%d", rc, errno);
     sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "sqlcipher_mlock: mlock(%p,%lu) returned %d errno=%d", ptr - offset, sz + offset, rc, errno);
   }
 #elif defined(_WIN32)
@@ -744,7 +743,6 @@ static void sqlcipher_mlock(void *ptr, sqlite_uint64 sz) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MEMORY, "sqlcipher_mlock: calling VirtualLock(%p,%d)", ptr, sz);
   rc = VirtualLock(ptr, sz);
   if(rc==0) {
-    sqlcipher_log(SQLCIPHER_LOG_WARN, SQLCIPHER_LOG_MEMORY, "sqlcipher_mlock: VirtualLock() returned %d LastError=%d", rc, GetLastError());
     sqlcipher_log(SQLCIPHER_LOG_INFO, SQLCIPHER_LOG_MEMORY, "sqlcipher_mlock: VirtualLock(%p,%d) returned %d LastError=%d", ptr, sz, rc, GetLastError());
   }
 #endif
