@@ -2,6 +2,8 @@
 Notable changes to this project are documented in this file.
 
 ## [4.17.0] - (? 2026 - [4.17.0 changes])
+- Normalize error behavior for incorrect keys when first operation
+  attempts to modfiy the schema
 
 ## [4.16.0] - (May 2026 - [4.16.0 changes])
 - Update baseline to SQLite 3.53.1

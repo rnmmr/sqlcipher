@@ -3245,6 +3245,12 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   if(ctx->error != SQLITE_OK) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: identified deferred error condition: %d", __func__, rc);
     sqlcipher_codec_ctx_set_error(ctx, ctx->error);
+    /* if this is a read, we don't want to return NULL as it will be interpreted as a SQLITE_NOMEM condition,
+     * so instead return a zeroed out buffer that will fail the magic header check */
+    if(mode == CODEC_READ_OP) { 
+      sqlcipher_memset(pData, 0, ctx->page_sz);
+      out = pData;
+    }
     goto cleanup;
   }
 
