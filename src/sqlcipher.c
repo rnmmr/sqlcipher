@@ -2040,9 +2040,20 @@ static int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, ch
     goto cleanup;
   }
 
-  sqlite3OsFileSize(fd, &file_sz);
+  if((rc = sqlite3OsFileSize(fd, &file_sz)) != SQLITE_OK) {
+    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "failed to determine file size", P4_TRANSIENT);
+    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    goto cleanup;
+  }
+
   if(!(hmac_out = sqlcipher_malloc(ctx->hmac_sz))) {
     sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "unable to allocate memory for hmac", P4_TRANSIENT);
+    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    goto cleanup;
+  }
+
+  if(ctx->plaintext_header_sz < 0) {
+    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "invalid plaintext header size", P4_TRANSIENT);
     sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
     goto cleanup;
   }
@@ -3367,7 +3378,7 @@ static void* sqlite3Codec(void *iCtx, void *data, Pgno pgno, int mode) {
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlite3Codec: pgno=%d, mode=%d, ctx->page_sz=%d", pgno, mode, ctx->page_sz);
 
   if(ctx->error != SQLITE_OK) {
-    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: identified deferred error condition: %d", __func__, rc);
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: identified deferred error condition: %d", __func__, ctx->error);
     sqlcipher_codec_ctx_set_error(ctx, ctx->error);
     /* if this is a read, we don't want to return NULL as it will be interpreted as a SQLITE_NOMEM condition,
      * so instead return a zeroed out buffer that will fail the magic header check */
@@ -3486,9 +3497,11 @@ cleanup:
  * ariund sqlciher_codec_ctx_free that locks the shared cache mutex if necessary */
 static void sqlite3FreeCodecArg(void *pCodecArg) {
   codec_ctx *ctx = (codec_ctx *) pCodecArg;
-  sqlite3_mutex *mutex = ctx->pBt->sharable ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL;
+  sqlite3_mutex *mutex = NULL;
 
   if(pCodecArg == NULL) return;
+
+  mutex = ctx->pBt->sharable ? sqlcipher_mutex(SQLCIPHER_MUTEX_SHAREDCACHE) : NULL;
 
   /* in shared cache mode, this needs to be mutexed to prevent a codec context from being deallocated when
    * it is in use by the codec due to cross-database handle access to the shared Btree */
@@ -3528,7 +3541,7 @@ int sqlcipherCodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     return SQLITE_MISUSE;
   }
 
-  if(!(db && nDb >= 0 && nDb < db->nDb && (pDb = &db->aDb[nDb]))) {
+  if(!(db && nDb >= 0 && nDb < db->nDb && (pDb = &db->aDb[nDb]) && pDb->pBt)) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: invalid database %p %d", __func__, db, nDb);
     return SQLITE_MISUSE;
   }
@@ -3921,7 +3934,7 @@ static void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_val
   if(argc == 2) {
     if(sqlite3_value_type(argv[1]) == SQLITE_NULL) {
       rc = SQLITE_ERROR;
-      pzErrMsg = sqlite3_mprintf("target database can't be NULL");
+      pzErrMsg = sqlite3_mprintf("source database can't be NULL");
       goto end_of_export;
     }
     sourceDb = (char *) sqlite3_value_text(argv[1]);
