@@ -451,6 +451,21 @@ static int sqlcipher_export_init(sqlite3* db, char** errmsg, const struct sqlite
   return SQLITE_OK;
 }
 
+#if defined (SQLCIPHER_CRYPTO_CC)
+#define SQLCIPHER_PROVIDER_SETUP sqlcipher_cc_setup 
+#elif defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT)
+#define SQLCIPHER_PROVIDER_SETUP sqlcipher_ltc_setup 
+#elif defined (SQLCIPHER_CRYPTO_OPENSSL)
+#define SQLCIPHER_PROVIDER_SETUP sqlcipher_openssl_setup 
+#elif defined (SQLCIPHER_CRYPTO_OSSL3)
+#define SQLCIPHER_PROVIDER_SETUP sqlcipher_ossl3_setup 
+#elif defined (SQLCIPHER_CRYPTO_CUSTOM)
+#define SQLCIPHER_PROVIDER_SETUP SQLCIPHER_CRYPTO_CUSTOM
+#else
+#error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
+#endif
+
+
 /* The extra_init function is called by sqlite3_init automaticay by virtue of
  * being defined with SQLITE_EXTRA_INIT. This function sets up 
  * static mutexes used internally by SQLCipher and initializes
@@ -459,6 +474,7 @@ int sqlcipher_extra_init(const char* arg) {
   int rc = SQLITE_OK, i=0;
   void* provider_ctx = NULL;
   int mutex_held = 0;
+  sqlcipher_provider *provider = NULL;
 
   sqlite3_mutex_enter(sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_MASTER));
   mutex_held = 1;
@@ -540,29 +556,25 @@ int sqlcipher_extra_init(const char* arg) {
      if there no provider registered at this point, register the 
      default provider */
   if(sqlcipher_get_provider() == NULL) {
-    sqlcipher_provider *p = sqlcipher_malloc(sizeof(sqlcipher_provider)); 
-#if defined (SQLCIPHER_CRYPTO_CC)
-    extern int sqlcipher_cc_setup(sqlcipher_provider *p);
-    sqlcipher_cc_setup(p);
-#elif defined (SQLCIPHER_CRYPTO_LIBTOMCRYPT)
-    extern int sqlcipher_ltc_setup(sqlcipher_provider *p);
-    sqlcipher_ltc_setup(p);
-#elif defined (SQLCIPHER_CRYPTO_OPENSSL)
-    extern int sqlcipher_openssl_setup(sqlcipher_provider *p);
-    sqlcipher_openssl_setup(p);
-#elif defined (SQLCIPHER_CRYPTO_OSSL3)
-    extern int sqlcipher_ossl3_setup(sqlcipher_provider *p);
-    sqlcipher_ossl3_setup(p);
-#elif defined (SQLCIPHER_CRYPTO_CUSTOM)
-    extern int SQLCIPHER_CRYPTO_CUSTOM(sqlcipher_provider *p);
-    SQLCIPHER_CRYPTO_CUSTOM(p);
-#else
-#error "NO DEFAULT SQLCIPHER CRYPTO PROVIDER DEFINED"
-#endif
-    if((rc = sqlcipher_register_provider(p)) != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "%s: failed to register provider %p %d", __func__, p, rc); 
+    extern int SQLCIPHER_PROVIDER_SETUP(sqlcipher_provider *);
+
+    if(!(provider = sqlcipher_malloc(sizeof(sqlcipher_provider)))) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "%s: failed to allocate provider", __func__); 
+      rc = SQLITE_NOMEM;
       goto error;
     }
+
+    if((rc = SQLCIPHER_PROVIDER_SETUP(provider)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "%s: failed to setup provider %d", __func__, rc); 
+      goto error;
+    }
+
+    if((rc = sqlcipher_register_provider(provider)) != SQLITE_OK) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "%s: failed to register provider %p %d", __func__, provider, rc); 
+      goto error;
+    }
+
+    provider = NULL; /* once provider is registered successfully it should no longer be cleaned up if an error occurs later */
   }
 
   /* required random data */
@@ -604,6 +616,8 @@ int sqlcipher_extra_init(const char* arg) {
   return SQLITE_OK;
  
 error:
+  if(provider) sqlcipher_free(provider, sizeof(sqlcipher_provider));
+
   /* if an error occurs during initialization, tear down everything that was setup */
 #ifndef SQLCIPHER_OMIT_MALLOC
   if(private_heap) {
@@ -2027,7 +2041,11 @@ static int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, ch
   }
 
   sqlite3OsFileSize(fd, &file_sz);
-  hmac_out = sqlcipher_malloc(ctx->hmac_sz);
+  if(!(hmac_out = sqlcipher_malloc(ctx->hmac_sz))) {
+    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "unable to allocate memory for hmac", P4_TRANSIENT);
+    sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
+    goto cleanup;
+  }
 
   for(page = 1; page <= file_sz / ctx->page_sz; page++) {
     i64 offset = (page - 1) * ctx->page_sz;
@@ -2091,7 +2109,11 @@ static int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   
   /* pull the provided password / key material off the current codec context */
   pass_sz = ctx->read_ctx->pass_sz;
-  pass = sqlcipher_malloc(pass_sz+1);
+  if(!(pass = sqlcipher_malloc(pass_sz+1))) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate key material storage", __func__);
+    rc = SQLITE_NOMEM;
+    goto handle_error;
+  }
   memset(pass, 0, pass_sz+1);
   memcpy(pass, ctx->read_ctx->pass, pass_sz);
 
@@ -2140,8 +2162,17 @@ migrate:
   sqlite3_free(temp);
   temp = NULL;
 
-  attach_command = sqlite3_mprintf("ATTACH DATABASE '%s' as migrate;", migrated_db_filename); 
-  set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version);
+  if(!(attach_command = sqlite3_mprintf("ATTACH DATABASE '%s' as migrate;", migrated_db_filename))) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate attach command", __func__);
+    rc = SQLITE_NOMEM;
+    goto handle_error;
+  }
+
+  if(!(set_user_version = sqlite3_mprintf("PRAGMA migrate.user_version = %d;", user_version))) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate user_version command", __func__);
+    rc = SQLITE_NOMEM;
+    goto handle_error;
+  }
 
   rc = sqlite3_exec(db, pragma_compat, NULL, NULL, NULL);
   if(rc != SQLITE_OK){
@@ -2224,11 +2255,19 @@ migrate:
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: performing windows MoveFileExA");
 
   w_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) db_filename, -1, NULL, 0);
-  w_db_filename = sqlcipher_malloc(w_db_filename_sz * sizeof(wchar_t));
+  if(!(w_db_filename = sqlcipher_malloc(w_db_filename_sz * sizeof(wchar_t)))) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate wide filename", __func__);
+    rc = SQLITE_NOMEM;
+    goto handle_error;
+  }
   w_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) db_filename, -1, (const LPWSTR) w_db_filename, w_db_filename_sz);
 
   w_migrated_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) migrated_db_filename, -1, NULL, 0);
-  w_migrated_db_filename = sqlcipher_malloc(w_migrated_db_filename_sz * sizeof(wchar_t));
+  if(!(w_migrated_db_filename = sqlcipher_malloc(w_migrated_db_filename_sz * sizeof(wchar_t)))) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate wide migrated filename", __func__);
+    rc = SQLITE_NOMEM;
+    goto handle_error;
+  }
   w_migrated_db_filename_sz = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) migrated_db_filename, -1, (const LPWSTR) w_migrated_db_filename, w_migrated_db_filename_sz);
 
   if(!MoveFileExW(w_migrated_db_filename, w_db_filename, MOVEFILE_REPLACE_EXISTING)) {
@@ -2274,12 +2313,13 @@ handle_error:
   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: reset all schemas");
 
   if(journal_mode) {
-    set_journal_mode = sqlite3_mprintf("PRAGMA journal_mode = %s;", journal_mode);
-    rc_cleanup = sqlite3_exec(db, set_journal_mode, NULL, NULL, NULL);
-    if(rc_cleanup != SQLITE_OK) {
-      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: failed to re-set journal mode via %s: %d", set_journal_mode, rc_cleanup);
-      if(rc == SQLITE_OK) {
-        rc = rc_cleanup;
+    if((set_journal_mode = sqlite3_mprintf("PRAGMA journal_mode = %s;", journal_mode))) {
+      rc_cleanup = sqlite3_exec(db, set_journal_mode, NULL, NULL, NULL);
+      if(rc_cleanup != SQLITE_OK) {
+        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: failed to re-set journal mode via %s: %d", set_journal_mode, rc_cleanup);
+        if(rc == SQLITE_OK) {
+          rc = rc_cleanup;
+        }
       }
     }
   }
@@ -2326,7 +2366,10 @@ static int sqlcipher_codec_add_random(codec_ctx *ctx, const char *zRight, int ra
     unsigned char *random;
     const unsigned char *z = (const unsigned char *)zRight + 2; /* adjust lead offset of x' */
     sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "sqlcipher_codec_add_random: using raw random blob from hex");
-    random = sqlcipher_malloc(buffer_sz);
+    if(!(random = sqlcipher_malloc(buffer_sz))) {
+      sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate buffer for random data", __func__);
+      return SQLITE_NOMEM;
+    }
     memset(random, 0, buffer_sz);
     cipher_hex2bin(z, n, random);
     rc = ctx->provider->add_random(ctx->provider_ctx, random, buffer_sz);
@@ -2938,21 +2981,30 @@ int sqlcipher_codec_pragma(sqlite3* db, int iDb, Parse *pParse, const char *zLef
     if(ctx) {
       if(zRight) {
         if (sqlite3StrNICmp(zRight ,"x'", 2) == 0 && sqlite3Strlen30(zRight) == (FILE_HEADER_SZ*2)+3) {
-          unsigned char *salt = (unsigned char*) sqlite3_malloc(FILE_HEADER_SZ);
+          unsigned char *salt = NULL;
           const unsigned char *hex = (const unsigned char *)zRight+2;
-          cipher_hex2bin(hex,FILE_HEADER_SZ*2,salt);
-          sqlcipher_codec_ctx_set_kdf_salt(ctx, salt, FILE_HEADER_SZ);
-          sqlite3_free(salt);
+           
+          if(!(salt = (unsigned char*) sqlite3_malloc(FILE_HEADER_SZ))) {
+            sqlcipher_codec_ctx_set_error(ctx, SQLITE_NOMEM);
+          } else {
+            cipher_hex2bin(hex,FILE_HEADER_SZ*2,salt);
+            sqlcipher_codec_ctx_set_kdf_salt(ctx, salt, FILE_HEADER_SZ);
+            sqlite3_free(salt);
+          }
         }
       } else {
         void *salt;
-        char *hexsalt = (char*) sqlite3_malloc((FILE_HEADER_SZ*2)+1);
-        if((rc = sqlcipher_codec_ctx_get_kdf_salt(ctx, &salt)) == SQLITE_OK) {
-          cipher_bin2hex(salt, FILE_HEADER_SZ, hexsalt);
-          sqlcipher_vdbe_return_string(pParse, "cipher_salt", hexsalt, P4_DYNAMIC);
+        char *hexsalt = NULL;
+        if((hexsalt = (char*) sqlite3_malloc((FILE_HEADER_SZ*2)+1))) {
+          if((rc = sqlcipher_codec_ctx_get_kdf_salt(ctx, &salt)) == SQLITE_OK) {
+            cipher_bin2hex(salt, FILE_HEADER_SZ, hexsalt);
+            sqlcipher_vdbe_return_string(pParse, "cipher_salt", hexsalt, P4_DYNAMIC);
+          } else {
+            sqlite3_free(hexsalt);
+            sqlcipher_codec_ctx_set_error(ctx, rc);
+          }
         } else {
-          sqlite3_free(hexsalt);
-          sqlcipher_codec_ctx_set_error(ctx, rc);
+          sqlcipher_codec_ctx_set_error(ctx, SQLITE_NOMEM);
         }
       }
     }
@@ -3748,7 +3800,8 @@ void sqlcipherCodecGetKey(sqlite3* db, int nDb, void **zKey, int *nKey) {
       /* if the key has not been derived yet, or the key is stored (vi PRAGMA cipher_store_pass)
        * then return the key material. Other wise pass back the keyspec */
       if(ctx->read_ctx->derive_key || ctx->store_pass == 1) {
-        *zKey = sqlcipher_malloc(ctx->read_ctx->pass_sz);
+        if(!(*zKey = sqlcipher_malloc(ctx->read_ctx->pass_sz))) return;
+
         *nKey = ctx->read_ctx->pass_sz;
         memcpy(*zKey, ctx->read_ctx->pass, ctx->read_ctx->pass_sz);
       } else {
@@ -3782,7 +3835,8 @@ static int sqlcipher_finalize(sqlite3 *db, sqlite3_stmt *pStmt, char **pzErrMsg)
   int rc;
   rc = sqlite3VdbeFinalize((Vdbe*)pStmt);
   if( rc ){
-    sqlite3SetString(pzErrMsg, db, sqlite3_errmsg(db));
+    if(*pzErrMsg) sqlite3_free(*pzErrMsg);
+    *pzErrMsg = sqlite3_mprintf("%s", sqlite3_errmsg(db));
   }
   return rc;
 }
@@ -3799,7 +3853,7 @@ static int sqlcipher_execSql(sqlite3 *db, char **pzErrMsg, const char *zSql){
     return SQLITE_NOMEM;
   }
   if( SQLITE_OK!=sqlite3_prepare(db, zSql, -1, &pStmt, 0) ){
-    sqlite3SetString(pzErrMsg, db, sqlite3_errmsg(db));
+    *pzErrMsg = sqlite3_mprintf("%s", sqlite3_errmsg(db));
     return sqlite3_errcode(db);
   }
   VVA_ONLY( rc = ) sqlite3_step(pStmt);
@@ -3979,7 +4033,7 @@ end_of_export:
   if(rc) {
     if(pzErrMsg != NULL) {
       sqlite3_result_error(context, pzErrMsg, -1);
-      sqlite3DbFree(db, pzErrMsg);
+      sqlite3_free(pzErrMsg);
     } else {
       sqlite3_result_error(context, sqlite3ErrStr(rc), -1);
     }
