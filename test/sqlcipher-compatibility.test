@@ -475,14 +475,14 @@ do_test export-nulls {
 db close
 file delete -force test.db
 
-do_test export-nulls {
+do_test export-nulls-source {
   sqlite_orig db test.db
 
   catchsql {
     SELECT sqlcipher_export('main', NULL);
   }
 
-} {1 {target database can't be NULL}}
+} {1 {source database can't be NULL}}
 db close
 file delete -force test.db
 
