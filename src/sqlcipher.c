@@ -591,6 +591,7 @@ int sqlcipher_extra_init(const char* arg) {
   if(!sqlcipher_shield_mask) {
     if(!(sqlcipher_shield_mask = sqlcipher_internal_malloc(sqlcipher_shield_mask_sz))) {
       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_MEMORY, "%s: failed to allocate shield mask", __func__); 
+      rc = SQLITE_NOMEM;
       goto error; 
     }
     if((rc = default_provider->random(provider_ctx, sqlcipher_shield_mask, (int) sqlcipher_shield_mask_sz)) != SQLITE_OK) {
