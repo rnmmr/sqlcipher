@@ -880,12 +880,15 @@ static void *sqlcipher_mem_realloc(void *p, int n) {
   void *new = NULL;
   int orig_sz = 0;
   if(sqlcipher_mem_security_on) {
+    if (!p) {
+      return sqlcipher_mem_malloc(n);
+    }
+
     orig_sz = sqlcipher_mem_size(p);
+
     if (n==0) {
       sqlcipher_mem_free(p);
       return NULL;
-    } else if (!p) {
-      return sqlcipher_mem_malloc(n);
     } else if(n <= orig_sz) {
       return p;
     } else {
