@@ -27,8 +27,6 @@ xcuserdata/*
 /libsqlite3.la
 /libtclsqlite3.la
 /sqlite3
-/sqlite3.c
-/sqlite3.h
 /lempar.c
 /parse.y
 /shell.c
@@ -38,3 +36,22 @@ xcuserdata/*
 /sqlite3ext.h
 /libsqlcipher.la
 /.DS_Store
+
+# Build artifacts from ./configure + make
+jimsh
+mksourceid
+src-verify
+ctime.c
+fts5.c
+fts5.h
+fts5parse.c
+fts5parse.h
+fts5parse.out
+fts5parse.sql
+fts5parse.y
+parse.sql
+pragma.h
+sqlite3session.h
+sqlite_cfg.h
+tclsqlite-ex.c
+.main.mk.checks

@@ -1,0 +1,55 @@
+name: Build Windows (sqlcipher_ntqq)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install OpenSSL via vcpkg
+        run: vcpkg install openssl:x64-windows
+        shell: cmd
+
+      - name: Setup MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Compile sqlcipher_ntqq.exe
+        run: |
+          $inc = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\include"
+          $lib = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\lib"
+          cl sqlite3.c main.c -Fesqlcipher_ntqq.exe -I. -I"$inc" -DSQLITE_HAS_CODEC -DSQLITE_THREADSAFE=0 -link "$lib\libcrypto.lib"
+        shell: pwsh
+
+      - name: Collect and upload artifacts
+        run: |
+          $dllDir = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\bin"
+          New-Item -ItemType Directory -Force -Path artifacts
+          Copy-Item sqlcipher_ntqq.exe artifacts\
+          Copy-Item "$dllDir\libcrypto-3-x64.dll" artifacts\
+          Compress-Archive -Path artifacts\* -DestinationPath sqlcipher_ntqq-windows-x64.zip
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcipher_ntqq-windows-x64
+          path: artifacts/
+          if-no-files-found: error
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcipher_ntqq-windows-x64-zip
+          path: sqlcipher_ntqq-windows-x64.zip
+          if-no-files-found: error
