@@ -28,7 +28,7 @@ jobs:
         run: |
           $inc = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\include"
           $lib = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\lib"
-          cl sqlite3.c main.c /Fesqlcipher_ntqq.exe -I. -I"$inc" -DSQLITE_HAS_CODEC -DSQLITE_THREADSAFE=1 -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown -link "$lib\libcrypto.lib"
+          cl sqlite3.c main.c "/Fe:sqlcipher_ntqq.exe" -I. -I"$inc" "-DSQLITE_HAS_CODEC" "-DSQLITE_EXTRA_INIT=sqlcipher_extra_init" "-DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown" "-DSQLITE_TEMP_STORE=2" "-DSQLITE_THREADSAFE=1" -link "$lib\libcrypto.lib"
         shell: pwsh
 
       - name: Collect and upload artifacts
