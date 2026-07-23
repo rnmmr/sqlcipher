@@ -10,71 +10,52 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-    env:
-      VCPKG_ROOT: C:\vcpkg
+    defaults:
+      run:
+        shell: msys2 {0}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup MSVC dev environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      # Build the tools we need (MSVC) first, before msys2
-      - name: Build lemon parser generator
-        run: cl tool/lemon.c -Felemon.exe -Itool
-
-      - name: Build mkkeywordhash
-        run: cl tool/mkkeywordhash.c -Femkkeywordhash.exe -Isrc
-
-      - name: Setup MSYS2 with Tcl
+      - name: Setup MSYS2 with all tools
         uses: msys2/setup-msys2@v2
         with:
           update: true
           install: >-
+            mingw-w64-x86_64-gcc
             mingw-w64-x86_64-tcl
-
-      - name: Install OpenSSL via vcpkg
-        run: |
-          vcpkg install openssl:x64-windows
-          echo "VCPKG_OPENSSL_DIR=$env:VCPKG_ROOT\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Append
+            mingw-w64-x86_64-openssl
 
       - name: Generate sqlite3.h
-        shell: msys2 {0}
         run: tclsh tool/mksqlite3h.tcl . > sqlite3.h
 
-      - name: Generate parse.c and parse.h
-        shell: msys2 {0}
+      - name: Build lemon & generate parse tables
         run: |
+          gcc -o lemon.exe tool/lemon.c -Itool
           cp src/parse.y .
           ./lemon.exe parse.y
+          cp tool/lempar.c .
 
-      - name: Generate opcodes.h and opcodes.c
-        shell: msys2 {0}
+      - name: Generate opcodes
         run: |
           cat parse.h src/vdbe.c | tclsh tool/mkopcodeh.tcl > opcodes.h
           tclsh tool/mkopcodec.tcl opcodes.h > opcodes.c
 
-      - name: Generate keywordhash.h
-        shell: msys2 {0}
-        run: ./mkkeywordhash.exe > keywordhash.h
+      - name: Generate keywordhash
+        run: |
+          gcc -o mkkeywordhash.exe tool/mkkeywordhash.c -Isrc
+          ./mkkeywordhash.exe > keywordhash.h
 
-      - name: Generate sqlite_cfg.h
-        shell: msys2 {0}
+      - name: Generate config header
         run: |
           cat > sqlite_cfg.h << 'EOF'
           #ifndef SQLITE_CFG_H
           #define SQLITE_CFG_H
           #define HAVE_USLEEP 1
-          #define HAVE_READLINE 0
-          #define HAVE_EDITLINE 0
-          #define HAVE_LINENOISE 0
           #endif
           EOF
 
-      - name: Create tsrc directory and populate (target_source)
-        shell: msys2 {0}
+      - name: Generate sqlite3.c amalgamation
         run: |
           mkdir -p tsrc
           cp src/* tsrc/
@@ -83,23 +64,16 @@ jobs:
           done
           cp parse.c parse.h opcodes.c opcodes.h keywordhash.h sqlite_cfg.h sqlite3.h tsrc/
           cp src/crypto.h src/sqlcipher.h tsrc/
-          rm -f tsrc/sqlite.h.in tsrc/parse.y tsrc/shell.c.in tsrc/tclsqlite.c
-          rm -f tsrc/test*.c
-          cat tsrc/vdbe.c | tclsh tool/vdbe-compress.tcl > vdbe.new
-          mv vdbe.new tsrc/vdbe.c
-          cp tool/lempar.c .
-
-      - name: Generate sqlite3.c amalgamation
-        shell: msys2 {0}
-        run: tclsh tool/mksqlite3c.tcl --linemacros=0
+          rm -f tsrc/sqlite.h.in tsrc/parse.y tsrc/shell.c.in tsrc/tclsqlite.c tsrc/test*.c
+          cat tsrc/vdbe.c | tclsh tool/vdbe-compress.tcl > vdbe.new && mv vdbe.new tsrc/vdbe.c
+          tclsh tool/mksqlite3c.tcl --linemacros=0
 
       - name: Compile sqlcipher_ntqq.exe
         run: |
-          cl sqlite3.c main.c -Fesqlcipher_ntqq.exe ^
-            -I. -I%VCPKG_OPENSSL_DIR%\include ^
-            -DSQLITE_HAS_CODEC -DSQLITE_THREADSAFE=0 ^
-            -DSQLITE_SOUNDEX -DSQLITE_ENABLE_COLUMN_METADATA ^
-            -link libcrypto.lib
+          gcc -o sqlcipher_ntqq.exe sqlite3.c main.c \
+            -I. $(pkg-config --cflags openssl) \
+            -DSQLITE_HAS_CODEC -DSQLITE_THREADSAFE=0 -DSQLITE_SOUNDEX \
+            $(pkg-config --libs openssl) -static-libgcc
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
