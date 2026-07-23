@@ -26,8 +26,10 @@ jobs:
             mingw-w64-x86_64-tcl
             mingw-w64-x86_64-openssl
 
-      - name: Generate sqlite3.h
-        run: tclsh tool/mksqlite3h.tcl . > sqlite3.h
+      - name: Build mksourceid & generate sqlite3.h
+        run: |
+          gcc -o mksourceid tool/mksourceid.c
+          tclsh tool/mksqlite3h.tcl . > sqlite3.h
 
       - name: Build lemon & generate parse tables
         run: |
