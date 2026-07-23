@@ -25,6 +25,7 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-tcl
             mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-pkg-config
 
       - name: Build mksourceid & generate sqlite3.h
         run: |
@@ -79,7 +80,8 @@ jobs:
       - name: Compile sqlcipher_ntqq.exe
         run: |
           gcc -o sqlcipher_ntqq.exe sqlite3.c main.c \
-            -I. $(pkg-config --cflags openssl) \
+            -I. -Iext/fts3 -Iext/fts5 -Iext/rtree -Iext/icu -Iext/session \
+            $(pkg-config --cflags openssl) \
             -DSQLITE_HAS_CODEC -DSQLITE_THREADSAFE=0 -DSQLITE_SOUNDEX \
             $(pkg-config --libs openssl) -static-libgcc
 
