@@ -1,0 +1,123 @@
+name: Build sqlcipher_ntqq
+
+on:
+  push:
+    branches: [ "**" ]
+    tags: [ "v*" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      VCPKG_ROOT: C:\vcpkg
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tcl (for amalgamation generation)
+        run: choco install active-tcl --no-progress -y
+
+      - name: Install OpenSSL via vcpkg
+        run: |
+          vcpkg install openssl:x64-windows
+          echo "VCPKG_OPENSSL_DIR=$env:VCPKG_ROOT\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Generate sqlite3.h
+        run: tclsh tool/mksqlite3h.tcl . > sqlite3.h
+
+      - name: Build lemon parser generator
+        run: cl tool\lemon.c -Felemon.exe -Itool
+
+      - name: Generate parse.c and parse.h
+        run: |
+          copy src\parse.y .
+          lemon.exe parse.y
+          copy lempar.c .
+
+      - name: Generate opcodes.h and opcodes.c
+        shell: pwsh
+        run: |
+          Get-Content parse.h, src\vdbe.c | tclsh tool\mkopcodeh.tcl > opcodes.h
+          tclsh tool\mkopcodec.tcl opcodes.h > opcodes.c
+
+      - name: Generate keywordhash.h
+        run: |
+          cl tool\mkkeywordhash.c -Femkkeywordhash.exe -Isrc
+          mkkeywordhash.exe > keywordhash.h
+
+      - name: Generate sqlite_cfg.h (minimal config)
+        shell: pwsh
+        run: |
+          @"
+          #ifndef SQLITE_CFG_H
+          #define SQLITE_CFG_H
+          #define HAVE_USLEEP 1
+          #define HAVE_READLINE 0
+          #define HAVE_EDITLINE 0
+          #define HAVE_LINENOISE 0
+          #endif
+          "@ > sqlite_cfg.h
+
+      - name: Create tsrc directory and populate (target_source)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tsrc | Out-Null
+
+          # Copy all source files from src/
+          Get-ChildItem -Path src -File | ForEach-Object {
+            Copy-Item $_.FullName -Destination tsrc\ -Force
+          }
+
+          # Copy extension source files
+          $extDirs = @("ext/fts3", "ext/icu", "ext/rtree", "ext/session", "ext/rbu", "ext/misc", "ext/userauth")
+          foreach ($dir in $extDirs) {
+            if (Test-Path $dir) {
+              Get-ChildItem -Path $dir -File | ForEach-Object {
+                Copy-Item $_.FullName -Destination tsrc\ -Force
+              }
+            }
+          }
+
+          # Copy generated files
+          Copy-Item parse.c, parse.h, opcodes.c, opcodes.h, keywordhash.h, sqlite_cfg.h, sqlite3.h -Destination tsrc\ -Force
+
+          # Copy crypto headers
+          Copy-Item src\crypto.h, src\sqlcipher.h -Destination tsrc\ -Force
+
+          # Remove files that shouldn't be in amalgamation
+          Remove-Item -Path tsrc\sqlite.h.in -ErrorAction SilentlyContinue
+          Remove-Item -Path tsrc\parse.y -ErrorAction SilentlyContinue
+          Remove-Item -Path tsrc\shell.c.in -ErrorAction SilentlyContinue
+          Remove-Item -Path tsrc\tclsqlite.c -ErrorAction SilentlyContinue
+
+          # Remove test files
+          Get-ChildItem -Path tsrc -Filter "test*.c" | Remove-Item -Force
+
+          # Run vdbe-compress.tcl
+          Get-Content tsrc\vdbe.c | tclsh tool\vdbe-compress.tcl > vdbe.new
+          Move-Item -Force vdbe.new tsrc\vdbe.c
+
+      - name: Generate sqlite3.c amalgamation
+        run: tclsh tool/mksqlite3c.tcl --linemacros=0
+
+      - name: Compile sqlcipher_ntqq.exe
+        run: |
+          cl sqlite3.c main.c -Fesqlcipher_ntqq.exe ^
+            -I. -I%VCPKG_OPENSSL_DIR%\include ^
+            -DSQLITE_HAS_CODEC -DSQLITE_THREADSAFE=0 ^
+            -DSQLITE_SOUNDEX -DSQLITE_ENABLE_COLUMN_METADATA ^
+            -link libcrypto.lib
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcipher_ntqq-x64-windows
+          path: sqlcipher_ntqq.exe

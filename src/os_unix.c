@@ -3325,6 +3325,7 @@ static int seekAndRead(unixFile *id, sqlite3_int64 offset, void *pBuf, int cnt){
   TIMER_START;
   assert( cnt==(cnt&0x1ffff) );
   assert( id->h>2 );
+  { extern int sqlcipher_ntqq_offset; offset += sqlcipher_ntqq_offset; }
   do{
 #if defined(USE_PREAD)
     got = osPread(id->h, pBuf, cnt, offset);

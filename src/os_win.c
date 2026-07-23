@@ -2733,6 +2733,7 @@ static int winRead(
   assert( id!=0 );
   assert( amt>0 );
   assert( offset>=0 );
+  { extern int sqlcipher_ntqq_offset; offset += sqlcipher_ntqq_offset; }
   SimulateIOError(return SQLITE_IOERR_READ);
   OSTRACE(("READ pid=%lu, pFile=%p, file=%p, buffer=%p, amount=%d, "
            "offset=%lld, lock=%d\n", osGetCurrentProcessId(), pFile,
