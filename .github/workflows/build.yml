@@ -63,6 +63,13 @@ jobs:
           for d in ext/fts3 ext/icu ext/rtree ext/session ext/rbu ext/misc ext/userauth; do
             [ -d "$d" ] && cp "$d"/*.c "$d"/*.h tsrc/ 2>/dev/null || true
           done
+          # Concatenate fts5 source files into fts5.c for amalgamation (exclude test/tcl files)
+          cat ext/fts5/fts5_aux.c ext/fts5/fts5_buffer.c ext/fts5/fts5_config.c \
+            ext/fts5/fts5_expr.c ext/fts5/fts5_hash.c ext/fts5/fts5_index.c \
+            ext/fts5/fts5_main.c ext/fts5/fts5_storage.c ext/fts5/fts5_tokenize.c \
+            ext/fts5/fts5_unicode2.c ext/fts5/fts5_varint.c ext/fts5/fts5_vocab.c \
+            > tsrc/fts5.c 2>/dev/null || true
+          [ -f ext/fts5/fts5.h ] && cp ext/fts5/fts5.h tsrc/
           cp parse.c parse.h opcodes.c opcodes.h keywordhash.h sqlite_cfg.h sqlite3.h tsrc/
           cp src/crypto.h src/sqlcipher.h tsrc/
           rm -f tsrc/sqlite.h.in tsrc/parse.y tsrc/shell.c.in tsrc/tclsqlite.c tsrc/test*.c
