@@ -80,7 +80,7 @@ jobs:
       - name: Compile sqlcipher_ntqq.exe
         run: |
           gcc -o sqlcipher_ntqq.exe sqlite3.c main.c \
-            -I. -Iext/fts3 -Iext/fts5 -Iext/rtree -Iext/icu -Iext/session \
+            -I. -Isrc -Iext/fts3 -Iext/fts5 -Iext/rtree -Iext/icu -Iext/session \
             -I/mingw64/include -L/mingw64/lib \
             -DSQLITE_HAS_CODEC -DSQLITE_THREADSAFE=0 -DSQLITE_SOUNDEX \
             -lcrypto -static-libgcc
