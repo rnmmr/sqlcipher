@@ -81,9 +81,9 @@ jobs:
         run: |
           gcc -o sqlcipher_ntqq.exe sqlite3.c main.c \
             -I. -Iext/fts3 -Iext/fts5 -Iext/rtree -Iext/icu -Iext/session \
-            $(pkg-config --cflags openssl) \
+            -I/mingw64/include -L/mingw64/lib \
             -DSQLITE_HAS_CODEC -DSQLITE_THREADSAFE=0 -DSQLITE_SOUNDEX \
-            $(pkg-config --libs openssl) -static-libgcc
+            -lcrypto -static-libgcc
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
