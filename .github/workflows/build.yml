@@ -35,8 +35,7 @@ jobs:
         run: |
           gcc -o lemon.exe tool/lemon.c -Itool
           cp src/parse.y .
-          ./lemon.exe parse.y
-          cp tool/lempar.c .
+          ./lemon.exe -Ttool/lempar.c parse.y
 
       - name: Generate opcodes
         run: |
