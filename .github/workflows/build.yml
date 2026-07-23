@@ -37,6 +37,9 @@ jobs:
           gcc -o lemon.exe tool/lemon.c -Itool
           cp src/parse.y .
           ./lemon.exe -Ttool/lempar.c parse.y
+          # Also generate fts5 parser
+          cp ext/fts5/fts5parse.y .
+          ./lemon.exe -Ttool/lempar.c fts5parse.y
 
       - name: Generate opcodes
         run: |
@@ -72,6 +75,7 @@ jobs:
             > tsrc/fts5.c 2>/dev/null || true
           [ -f ext/fts5/fts5.h ] && cp ext/fts5/fts5.h tsrc/
           cp parse.c parse.h opcodes.c opcodes.h keywordhash.h sqlite_cfg.h sqlite3.h tsrc/
+          cp fts5parse.h tsrc/ 2>/dev/null || true
           cp src/crypto.h src/sqlcipher.h tsrc/
           rm -f tsrc/sqlite.h.in tsrc/parse.y tsrc/shell.c.in tsrc/tclsqlite.c tsrc/test*.c
           cat tsrc/vdbe.c | tclsh tool/vdbe-compress.tcl > vdbe.new && mv vdbe.new tsrc/vdbe.c
