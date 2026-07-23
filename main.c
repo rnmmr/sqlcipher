@@ -256,6 +256,7 @@ int wmain(int argc, wchar_t *argv[])
         {
             /* Query with no rows returned, or DML statement */
         }
+        fflush(stdout); /* flush stdout so piped consumers get data immediately */
 
         /* Reset SQL buffer */
         free(sql);
