@@ -83,6 +83,7 @@ jobs:
             -I. -Isrc -Iext/fts3 -Iext/fts5 -Iext/rtree -Iext/icu -Iext/session \
             -I/mingw64/include -L/mingw64/lib \
             -DSQLITE_HAS_CODEC -DSQLITE_THREADSAFE=0 -DSQLITE_SOUNDEX \
+            -DSQLITE_PRIVATE= \
             -lcrypto -static-libgcc
 
       - name: Upload artifact
